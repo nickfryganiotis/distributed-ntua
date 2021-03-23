@@ -10,10 +10,16 @@ public_net['host'] = "192.168.0.1"
 public_net['port'] = "5000"
 private_net = {}
 n = None
+traversed = False
 query_sp = 0
 
 def get_url(net):
     return "http:"+net['host']+":"+net['port']
+
+
+@app.before_first_request
+def startup():
+  print("Hi asshole")
 
 @app.route('/set_predecessor',methods = ['POST'])
 def _set_predecessor():
@@ -39,10 +45,10 @@ def _get_song_list():
     global n
     return n.get_song_list()
 
-#@app.route('/get_identifier',methods = ['GET'])
-#def _get_identifier():
-#    global n
-#    return {'id':n.identifier}
+@app.route('/get_identifier',methods = ['GET'])
+def _get_identifier():
+    global n
+    return {'id':n.identifier}
 
 @app.route('/add_songs_to_song_list',methods = ['POST'])
 def add_songs_to_song_list():
@@ -60,6 +66,21 @@ def _delete_songs_from_song_list():
         n.delete_song_from_song_list(int(key))
     return "Delete songs was done"
 
+@app.route('/find_successor',methods = ['POST'])
+def find_successor():
+    global n
+    result = request.form.to_dict()
+    id = int(result['id'])
+    successor_url = get_url(n.get_successor())
+    req = requests.get(successor_url+"/get_identifier")
+    n_successor_identifier = req.json()['id']
+    if  (id > n.identifier and id <= n_successor_identifier) or n_successor_identifier == n.identifier:
+        return n.get_successor()
+    else:
+        req = requests.post("/find_successor", data = {'id':id})
+        return req.json()
+    return "Error" 
+
 @app.route('/join', methods = ['GET'])
 def join():
     global n                                                                                                                
@@ -74,21 +95,25 @@ def join():
     else:
       n.set_predecessor({'host': n.host,'port': n.port})
       n.set_successor({'host': n.host,'port': n.port})
+    return "Join successfully done"
 
 @app.route('/dht_add_node',methods = ['GET'])
 def dht_add_node():
     global n
     global public_net
     public_url = get_url(public_net)
-    n_successor = requests.post(public_url+"/find_successor",data = {'id':n.identifier})
+    req = requests.post(public_url+"/find_successor",data = {'id':n.identifier})
+    n_successor = req.json()
     n.set_successor(n_successor)
     successor_url = get_url(n_successor)
-    n_predecessor = request.get(successor_url+"/get_predecessor")
+    req = request.get(successor_url+"/get_predecessor")
+    n_predecessor = req.json()
     n.set_predecessor(n_predecessor)
     req = requests.post(successor_url+"/set_predecessor",data = {'host': n.host, 'port': n.port})
     predecessor_url = get_url(n_predecessor)
     req = requests.post(predecessor_url+"/set_suceessor",data = {'host': n.host, 'port': n.port})
-    successor_song_list = (successor_url+"/get_song_list")
+    req = requests.get(successor_url+"/get_song_list")
+    successor_song_list = req.json()
     deleted_keys = {}
     for key in successor_song_list:
         if key <= n.identifier:
@@ -96,6 +121,64 @@ def dht_add_node():
             deleted_keys[key] = ""
     req = requests.post(successor_url+"/delete_songs_from_song_list",data = deleted_keys) 
     return "Add node to dht successfully done"
+
+@app.route('/insert',methods = ['POST'])
+def insert():
+  global n
+  global private_net
+  results = request.form.to_dict()
+  key = int(results['key'])
+  value = int(results['value'])
+  url = get_url(private_net)
+  req = requests.post(url()+"/find_successor",data = {'id': key})
+  id_successor = req.json()
+  successor_url = get_url(id_successor)
+  req = requests.post(successor_url+"/add_songs_to_song_list", data = {'key': key , 'value': value})
+  return "Insert done"
+
+@app.route('/delete',methods = ['POST'])
+def delete():
+  global n
+  global private_net
+  results = request.form.to_dict()
+  key = int(results['key'])
+  url = get_url(private_net)
+  req = requests.post(url+"/find_successor",data = {'id': key})
+  id_successor = req.json()
+  successor_url = get_url(id_successor)
+  req = requests.post(successor_url+"/delete_songs_from_song_list",data = {'key': key})
+  return "Delete done"
+
+@app.route('/query',methods = ['POST'])
+def query():
+  global n
+  global query_sp
+  global traversed
+  global private_net
+  results = request.form.to_dict()
+  key = int(results['key'])
+  url = get_url(private_net)
+  if not key == query_sp:
+    req = requests.post(url()+"/find_successor", data = {'id':key})
+    id_successor = req.json()
+    successor_url = get_url(id_successor)
+    req = requests.get(successor_url+"/get_song_list")
+    return {'value': req.json()[key]}
+  else:
+    if not traversed:
+      f = open("query.txt","w")
+      f.write("Node "+str(n.identifier)+":\n")
+      tmp_song_list = n.get_song_list()
+      for key in tmp_song_list:
+        f.write("key: "+str(key)+" value: "+str(tmp_song_list[key])+"\n")
+      f.close()
+      n_successor = n.get_successor()
+      successor_url = get_url(n_successor)
+      traversed = True
+      req = requests.post(successor_url+'/query',data = {'key':query_sp})
+      traversed = False
+    return "Query * done"
+  return "Query done"
 
 @app.route('/depart',methods = ['GET'])
 def depart():
