@@ -31,25 +31,18 @@ def main(host,port):
         key = key_value_arr[0]
         hash_value = hashlib.sha1(key.encode())
         key_identifier = int(hash_value.hexdigest(),16)
-        if key == "*":
-          f = open("query.txt","w+")
-          f.close()
         req = requests.post(url+"/"+cmd,data = {'key': key_identifier})
         if cmd == "query":
           if not key == "*":
             print(req.json())
           else:
-            f = open("query.txt","r")
-            lines = f.readlines()
-            for line in lines:
-              print(line)
-            f.close()
-            os.remove("query.txt")
+            print(req.text)
 
       elif (cmd == "depart" or cmd == "overlay" or cmd == "help") and key_value_arr_size == 1 and key_value_arr[0] == "":
+        req = requests.get(url+"/"+cmd)
         if cmd == "depart":
           break
-        print(cmd)
+        print(req.text)
       else:
         print(key_value_arr[0])
         print("invalid command")
