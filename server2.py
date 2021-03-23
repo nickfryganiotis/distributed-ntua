@@ -97,6 +97,7 @@ def join():
       n.set_predecessor({'host': n.host,'port': n.port})
       n.set_successor({'host': n.host,'port': n.port})
     return "Join was Successful"
+
 @app.route('/dht_add_node',methods = ['GET'])
 def dht_add_node():
     global n
@@ -116,8 +117,8 @@ def dht_add_node():
     successor_song_list = req.json()
     deleted_keys = {}
     for key in successor_song_list:
-        if key <= n.identifier:
-            n.set_song_to_song_list(key,successor_song_list[key])
+        if int(key) <= n.identifier:
+            n.set_song_to_song_list(int(key),int(successor_song_list[key]))
             deleted_keys[key] = ""
     req = requests.post(successor_url+"/delete_songs_from_song_list",data = deleted_keys)
     return "Add node to dht successfully done"
