@@ -1,9 +1,12 @@
 import sys
+import os
 import requests
 import hashlib
-#req = requests.get("http://192.168.0.1:5000/join")
+
 def main(host,port):
-  while True:
+ url = "http://"+host+":"+str(port)
+ req = requests.get(url+"/join")
+ while True:
     input = sys.stdin.readline()
     input = input.splitlines()[0]
     cmd_arr = input.split()
@@ -20,15 +23,29 @@ def main(host,port):
         key = key_value_arr[0]
         value = key_value_arr[1]
         hash_value = hashlib.sha1(key.encode())
-        identifier = int(hash_value.hexdigest(),16)
-        print(cmd)
-        print(identifier)
+        key_identifier = int(hash_value.hexdigest(),16)
+        hash_value = hashlib.sha1(value.encode())
+        value_identifier = int(hash_value.hexdigest(),16)
+        req = requests.post(url+"/"+cmd,data = {'key': key_identifier, 'value': value_identifier})
       elif (cmd_arr[0] == "delete" or cmd_arr[0] == "query") and key_value_arr_size == 1 and not (key_value_arr[0] == ""):
         key = key_value_arr[0]
         hash_value = hashlib.sha1(key.encode())
-        identifier = int(hash_value.hexdigest(),16)
-        print(cmd)
-        print(identifier)
+        key_identifier = int(hash_value.hexdigest(),16)
+        if key == "*":
+          f = open("query.txt","w+")
+          f.close()
+        req = requests.post(url+"/"+cmd,data = {'key': key_identifier})
+        if cmd == "query":
+          if not key == "*":
+            print(req.json())
+          else:
+            f = open("query.txt","r")
+            lines = f.readlines()
+            for line in lines:
+              print(line)
+            f.close()
+            os.remove("query.txt")
+
       elif (cmd == "depart" or cmd == "overlay" or cmd == "help") and key_value_arr_size == 1 and key_value_arr[0] == "":
         if cmd == "depart":
           break
