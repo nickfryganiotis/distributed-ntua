@@ -3,10 +3,36 @@ import os
 import requests
 import hashlib
 
+
+public_net = {}
+public_net['host'] = "192.168.0.1"
+public_net['port'] = "5000"
+private_net = {}
+
 def main(host,port):
- url = "http://"+host+":"+str(port)
- req = requests.get(url+"/join")
- while True:
+  global private_net
+  global public_net
+  private_net['host'] = host
+  private_net['port'] = port
+  url = "http://"+host+":"+str(port)
+  print("Node "+url+" is joining chord ")
+  
+  if private_net['host'] == public_net['host'] and private_net['port'] == public_net['port']:
+    ## if node joining is the coordinator he chooses replica number and replication method
+    print("Choose replica number k:")
+    k = int(sys.stdin.readline().splitlines()[0])
+    print("Choose replication method ")
+    while True:
+      replication_method = (sys.stdin.readlines().splitlines()[0])
+      if replication_method == "linearizability" or replication_method == "eventual consistency":
+        break
+      print("invalid replication method")  
+    req = requests.post(url+"/set_replication_parameters",data = {'k':k,'replication_method':replication_method})
+  
+  ## Node joins dht
+  req = requests.get(url+"/join")
+
+  while True:
     input = sys.stdin.readline()
     input = input.splitlines()[0]
     cmd_arr = input.split()
