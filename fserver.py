@@ -77,7 +77,7 @@ def _get_identifier():
     global n
     return {'id':n.identifier}
 
-@app.route('get_replication_parameters')
+@app.route('/get_replication_parameters')
 def _get_replication_parameters():
     global k
     global replication_method
@@ -93,7 +93,7 @@ def add_songs_to_song_list():
         n.set_song_to_song_list(int(key),int(result[key]))
     return "Add songs was done"
 
-@app.route('/add_replicas_to_song_list', methods = ['POST'])
+@app.route('/add_replicas_to_replica_list', methods = ['POST'])
 def add_replicas_to_song_list():
     global n
     result = requests.form.to_dict()
@@ -111,6 +111,14 @@ def _delete_songs_from_song_list():
     for key in result:
         n.delete_song_from_song_list(int(key))
     return "Delete songs was done"
+
+@app.route('delete_replicas_from_replica_list', methods = ['POST'])
+def _delete_replicas_from_replica_list():
+    global n
+    result = request.form.to_dict()
+    for key in result:
+        n.delete_replica_from_replica_list(int(key))
+    return "Delete replicas was done"
 
 # Chord methods
 
@@ -249,14 +257,29 @@ def replicas_exchange_after_join():
 def insert():
   global n
   global private_net
+  global k
+  global replication_method
   results = request.form.to_dict()
   key = int(results['key'])
   value = int(results['value'])
   url = get_url(private_net)
+  ## Node uses find_successor in order to find successor node of hash(key) identifier
   req = requests.post(url+"/find_successor",data = {'id': key})
   id_successor = req.json()
+  ## In case of k > 1 and replication method = linearizability keep Node 
+  primary_node = id_successor
   successor_url = get_url(id_successor)
+  ## Add song to identifier's successor 
   req = requests.post(successor_url+"/add_songs_to_song_list", data = {key:value})
+  if replication_method == "linearizability":
+      for i in range(1,k):
+          ## Create a(at most) k-1 length replica chain 
+          req = requests.get(successor_url+"/get_successor")
+          id_successor = req.json()
+          if id_successor == primary_node:
+              break
+          successor_url = get_url(id_successor)
+          req = requests.post(successor_url + "/add_replicas_to_replica_list", data = {'replicas':json.dump({key:[value,i]})})
   return "Insert done"
 
 @app.route('/delete',methods = ['POST'])
@@ -266,10 +289,23 @@ def delete():
   results = request.form.to_dict()
   key = int(results['key'])
   url = get_url(private_net)
+  ## Node uses find_successor in order to find successor node of hash(key) identifier
   req = requests.post(url+"/find_successor",data = {'id': key})
   id_successor = req.json()
+  ## In case of k > 1 and replication method = linearizability keep Node
+  primary_node = id_successor
   successor_url = get_url(id_successor)
+  ## Delete song from identifier's successor
   req = requests.post(successor_url+"/delete_songs_from_song_list",data = {key: ''})
+  if replication_method == "linearizability":
+      for i in range(1,k):
+          ## Delete(at most) k-1 replicas 
+          req = requests.get(successor_url+"/get_successor")
+          id_successor = req.json()
+          if id_successor == primary_node:
+              break
+          successor_url = get_url(id_successor)
+          req = requests.post(successor_url + "/delete_replicas_from_replica_list", data = {key: ''})
   return "Delete done"
 
 @app.route('/query',methods = ['POST'])
