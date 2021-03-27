@@ -4,6 +4,7 @@ import sys
 from node2 import Node
 import hashlib
 import json
+import copy
 
 app = Flask(__name__)
 public_net= {}
@@ -18,11 +19,6 @@ replication_method = ""
 
 def get_url(net):
     return "http://"+net['host']+":"+net['port']
-
-
-@app.before_first_request
-def startup():
-  print("Hi asshole")
 
 # Node methods
 
@@ -42,14 +38,14 @@ def _set_successor():
     n.set_successor(result)
     return "Set successor done"
 
-#@app.route('/set_replication_parameters',methods = ['POST'])
-#def _set_replication_parameters():
-#    global k
-#    global replication_method
-#    result = request.form.to_dict()
-#    k = int(result['k'])
-#    replication_method = result['replication_method']
-#    return "Set replication parameters done"
+@app.route('/set_replication_parameters',methods = ['POST'])
+def _set_replication_parameters():
+    global k
+    global replication_method
+    result = request.form.to_dict()
+    k = int(result['k'])
+    replication_method = result['replication_method']
+    return "Set replication parameters done"
 
 ### Getters
 
@@ -90,17 +86,17 @@ def add_songs_to_song_list():
     global n
     result = request.form.to_dict()
     for key in result:
-        n.set_song_to_song_list(int(key),int(result[key]))
+        n.set_song_to_song_list(int(key),result[key])
     return "Add songs was done"
 
 @app.route('/add_replicas_to_replica_list', methods = ['POST'])
 def add_replicas_to_song_list():
     global n
-    result = requests.form.to_dict()
+    result = request.form.to_dict()
     replicas = json.loads(result['replicas'])
     for key in replicas:
         n.set_replica_to_replica_list(int(key),replicas[key])
-    return "Add replica was done"   
+    return "Add replica was done"
 
 ### Delete elements
 
@@ -112,7 +108,7 @@ def _delete_songs_from_song_list():
         n.delete_song_from_song_list(int(key))
     return "Delete songs was done"
 
-@app.route('delete_replicas_from_replica_list', methods = ['POST'])
+@app.route('/delete_replicas_from_replica_list', methods = ['POST'])
 def _delete_replicas_from_replica_list():
     global n
     result = request.form.to_dict()
@@ -129,7 +125,8 @@ def find_successor():
     id = int(result['id'])
     successor_url = get_url(n.get_successor())
     req = requests.get(successor_url+"/get_identifier")
-    n_successor_identifier = req.json()['id']
+    n_successor_identifier = int(req.json()['id'])
+
     if  (id > n.identifier and id <= n_successor_identifier) or n_successor_identifier == n.identifier or (n_successor_identifier < n.identifier and (id > n.identifier or id < n_successor_identifier)):
         return n.get_successor()
     else:
@@ -145,6 +142,7 @@ def join():
     hash_index = private_net['host'] + ":"+str(private_net['port'])
     hash_value = hashlib.sha1(hash_index.encode())
     identifier = int(hash_value.hexdigest(),16)
+    n = Node(identifier, private_net['host'], private_net['port'])
     url = get_url(private_net)
     if not (private_net['host'] == public_net['host'] and private_net['port'] == public_net['port']):
         ## Initialize Node different from the Coordinator
@@ -153,7 +151,7 @@ def join():
       ## Initialize Coordinator
       n.set_predecessor({'host': n.host,'port': n.port})
       n.set_successor({'host': n.host,'port': n.port})
-    return "Join was Successful"
+    return "Join successful!"
 
 @app.route('/dht_add_node',methods = ['GET'])
 def dht_add_node():
@@ -161,8 +159,8 @@ def dht_add_node():
     global public_net
     global k
     global replication_method
-    global traversed 
-    
+    global traversed
+
     ## Coordinator finds new Node's successor
     public_url = get_url(public_net)
     req = requests.post(public_url+"/find_successor",data = {'id':n.identifier})
@@ -170,7 +168,7 @@ def dht_add_node():
     n.set_successor(n_successor)
     successor_url = get_url(n_successor)
 
-    ## New Node's predecessor is the predecessor of the successor 
+    ## New Node's predecessor is the predecessor of the successor
     req = requests.get(successor_url+"/get_predecessor")
     n_predecessor = req.json()
     n.set_predecessor(n_predecessor)
@@ -180,15 +178,22 @@ def dht_add_node():
     predecessor_url = get_url(n_predecessor)
     req = requests.post(predecessor_url+"/set_successor",data = {'host': n.host, 'port': n.port})
     req = requests.get(successor_url+"/get_song_list")
-    
+
     ## Νew Node song list is successor's song list for keys that hash(key) <= Node identifier
     successor_song_list = req.json()
     deleted_keys = {}
+    req = requests.get(successor_url+"/get_identifier")
+    suc_id = int(req.json()['id'])
+    req = requests.get(predecessor_url+"/get_identifier")
+    pred_id = int(req.json()['id'])
+    if pred_id > suc_id:
+      OFFS = (2^160)-pred_id
+    else:
+      OFFS = 0
     for key in successor_song_list:
-        if int(key) <= n.identifier:
+        if (int(key)+OFFS)%(2^160) <= (n.identifier+OFFS)%(2^160) :
             n.set_song_to_song_list(int(key),int(successor_song_list[key]))
-            deleted_keys[key] = ""
-    
+            deleted_keys[int(key)] = "del"
     ## Successor deletes the songs that belong to me
     req = requests.post(successor_url+"/delete_songs_from_song_list",data = deleted_keys)
 
@@ -197,8 +202,8 @@ def dht_add_node():
     replication_parameters = req.json()
     k = int(replication_parameters['k'])
     replication_method = replication_parameters['replication_method']
-    
-    ## In case of k > 1 new Node gets replicas of predecessor if replica chain doesn't stop on predecessor  
+
+    ## In case of k > 1 new Node gets replicas of predecessor if replica chain doesn't stop on predecessor
     if not k == 1:
         req = requests.get(predecessor_url+"/get_replica_list")
         predecessor_replica_list = req.json()
@@ -206,10 +211,20 @@ def dht_add_node():
             val_arr = predecessor_replica_list[key]
             if val_arr[1] < k-1:
                 n.set_replica_to_replica_list(int(key),[val_arr[0],val_arr[1]+1])
+        req = requests.get(predecessor_url+"/get_song_list")
+        predecessor_song_list = req.json()
+        for key in predecessor_song_list:
+            val_arr = predecessor_song_list[key]
+            n.set_replica_to_replica_list(int(key), [val_arr, 1])
         traversed = True
+        replicas_to_send = copy.copy(n.get_replica_list())
+        for key in n.get_song_list():
+            replicas_to_send[key] = [n.get_song_list()[key] , 0]
         ## New Node exchanges replicas with his successor
-        req = requests.post(successor_url+"replicas_exchange_after_join",data = {'replicas':json.dumps(n.get_replica_list)})
+        #req = requests.post(successor_url+"/replicas_exchange_after_join",data = {'replicas':json.dumps(n.get_replica_list())})
+        req = requests.post(successor_url+"/replicas_exchange_after_join",data = {'replicas' : json.dumps(replicas_to_send)})
         traversed = False
+        #req = requests.post(successor_url+"/add_replicas_to_replica_list",data= {'replicas':json.dumps(deleted_keys)})
     return "Add node to dht successfully done"
 
 @app.route('/replicas_exchange_after_join', methods = ['POST'])
@@ -221,7 +236,7 @@ def replicas_exchange_after_join():
 
     if not traversed:
         result = request.form.to_dict()
-        new_node_replicas = json.load(result['replicas'])
+        new_node_replicas = json.loads(result['replicas'])
         end_replicas_exchange = True
         ## Check if replica chain has been completed for every replica of new Node
         for key in new_node_replicas:
@@ -232,26 +247,27 @@ def replicas_exchange_after_join():
         if end_replicas_exchange:
             traversed = False
             return "Replicas exchange after join successfully done"
-        
+
         replicas_exchange = {}
         tmp_node_replicas = n.get_replica_list()
         for key in new_node_replicas:
             val_arr = new_node_replicas[key]
             ## If replica chain has finished to tmp_node predecessor delete replica
-            if int(key) in tmp_node_replicas:
+            if int(key) in tmp_node_replicas or val_arr[1] == 0:
                 if val_arr[1] == k-1:
                     n.delete_replica_from_replica_list(int(key))
                 else:
-                    n.set_replica_to_replica_list(int(key),val_arr[1]+1)
-                val_arr[1] += 1
+                    n.set_replica_to_replica_list(int(key),[val_arr[0], val_arr[1]+1])
+                if val_arr[1] < k:
+                    val_arr[1] += 1
             replicas_exchange[int(key)] = val_arr
-        
+
         ## Tmp_node exchanges replicas with his successor
         successor_url = get_url(n.get_successor())
         traversed = True
         req = requests.post(successor_url+"/replicas_exchange_after_join",data = {'replicas':json.dumps(replicas_exchange)})
     traversed = False
-    return "Replicas exchange after join successfully done" 
+    return "Replicas exchange after join successfully done"
 
 @app.route('/insert',methods = ['POST'])
 def insert():
@@ -261,26 +277,28 @@ def insert():
   global replication_method
   results = request.form.to_dict()
   key = int(results['key'])
-  value = int(results['value'])
+  value = results['value']
   url = get_url(private_net)
   ## Node uses find_successor in order to find successor node of hash(key) identifier
   req = requests.post(url+"/find_successor",data = {'id': key})
   id_successor = req.json()
-  ## In case of k > 1 and replication method = linearizability keep Node 
+  print("Id successor : ", id_successor)
+  print("My id :", key)
+  ## In case of k > 1 and replication method = linearizability keep Node
   primary_node = id_successor
   successor_url = get_url(id_successor)
-  ## Add song to identifier's successor 
+  ## Add song to identifier's successor
   req = requests.post(successor_url+"/add_songs_to_song_list", data = {key:value})
   if replication_method == "linearizability":
-      for i in range(1,k):
-          ## Create a(at most) k-1 length replica chain 
+      for i in range(2,k+1):
+          ## Create a(at most) k-1 length replica chain
           req = requests.get(successor_url+"/get_successor")
           id_successor = req.json()
           if id_successor == primary_node:
               break
           successor_url = get_url(id_successor)
-          req = requests.post(successor_url + "/add_replicas_to_replica_list", data = {'replicas':json.dump({key:[value,i]})})
-  return "Insert done"
+          req = requests.post(successor_url + "/add_replicas_to_replica_list", data = {'replicas':json.dumps({key:[value,i-1]})})
+  return "Insert successful!"
 
 @app.route('/delete',methods = ['POST'])
 def delete():
@@ -297,39 +315,76 @@ def delete():
   successor_url = get_url(id_successor)
   ## Delete song from identifier's successor
   req = requests.post(successor_url+"/delete_songs_from_song_list",data = {key: ''})
-  if replication_method == "linearizability":
-      for i in range(1,k):
-          ## Delete(at most) k-1 replicas 
+  if replication_method == "linearizability" or replication_method == "eventual consistency":
+      for i in range(2,k+1):
+          ## Delete(at most) k-1 replicas
           req = requests.get(successor_url+"/get_successor")
           id_successor = req.json()
           if id_successor == primary_node:
               break
           successor_url = get_url(id_successor)
           req = requests.post(successor_url + "/delete_replicas_from_replica_list", data = {key: ''})
-  return "Delete done"
+  return "Delete successful!"
 
 @app.route('/query',methods = ['POST'])
 def query():
   global n
+  global k
+  global replication_method
   global query_sp
   global traversed
   global private_net
   results = request.form.to_dict()
   key = int(results['key'])
   url = get_url(private_net)
+  ## Case 1: Looking for the successor of only one key
   if not key == query_sp:
-    req = requests.post(url+"/find_successor", data = {'id':key})
-    id_successor = req.json()
-    successor_url = get_url(id_successor)
-    req = requests.get(successor_url+"/get_song_list")
-    return {'value': req.json()[str(key)]}
+    ## In case of k = 1(no replicas) or replication method = linearizability find the successor of hash(key)
+    if replication_method == "linearizability" or k==1:
+
+        req = requests.post(url+"/find_successor", data = {'id':key})
+        id_successor = req.json()
+        successor_url = get_url(id_successor)
+        primary_node = id_successor
+        ## k > 1 find replica from last replica manager in replica chain
+        for i in range(2,k+1):
+            req = requests.get(successor_url+"/get_successor")
+            id_successor = req.json()
+            if id_successor == primary_node:
+              break
+            successor_url = get_url(id_successor)
+            req = requests.get(successor_url + "/get_replica_list")
+
+        ## If k = 1 no replicas
+        if k==1:
+            req = requests.get(successor_url+"/get_song_list")
+
+        song_list = req.json()
+        if str(key) in song_list:
+            ## In case of replicas song_list[key] is a list
+            if type(song_list[str(key)]) == list:
+                val_arr = song_list[str(key)]
+                value = val_arr[0]
+            else:
+            ## In case of Node song_list song_list[key] is an integer
+                value = song_list[str(key)]
+            return {'value': value}
+        else:
+            return {'key': "Not found"}
+
+
   else:
+    ## Case 2: Print all keys of every node
     text = ""
     if not traversed:
-      text = "Node " +str(n.identifier)+":\n"
+      text = "\nNode " +str(n.identifier)+":\n"
       tmp_song_list = n.get_song_list()
       for key in tmp_song_list:
         text += "key: "+str(key)+" value: "+str(tmp_song_list[key])+"\n"
+      if k > 1:
+          tmp_replica_list = n.get_replica_list()
+          for key in tmp_replica_list:
+              text += "key: "+str(key)+" value: "+str(tmp_replica_list[key])+"\n"
       n_successor = n.get_successor()
       successor_url = get_url(n_successor)
       traversed = True
@@ -354,14 +409,19 @@ def depart():
     req = requests.post(predecessor_url+"/set_successor",data = n_successor)
     ## Leaving Node gives his song list to his successor
     req = requests.post(successor_url+"/add_songs_to_song_list",data = n.get_song_list())
-    
+
     ## In case of k > 1 leaving Node gives his replicas to his successor
     if not k == 1:
+        replica_lista = copy.copy(n.get_replica_list())
+        successor_deleted_replicas = copy.copy(n.get_song_list())
+        for key in successor_deleted_replicas:
+          replica_lista[key] = [successor_deleted_replicas[key] , 0]
+        req = requests.post(successor_url+"/delete_replicas_from_replica_list",data = successor_deleted_replicas)
         traversed = True
-        req = requests.post(successor_url+"replicas_exchange_after_depart",data = {'replicas':json.dumps(n.get_replica_list)})
+        req = requests.post(successor_url+"/replicas_exchange_after_depart",data = {'replicas':json.dumps(replica_lista)})
         traversed = False
     n = None
-    return "Depart node successfuly done"
+    return "Depart successful!"
 
 @app.route('/replicas_exchange_after_depart',methods = ['POST'])
 def replicas_exchange_after_depart():
@@ -371,27 +431,31 @@ def replicas_exchange_after_depart():
 
     if not traversed:
         result = request.form.to_dict()
-        leaving_node_replicas = json.load(result['replicas'])
+        leaving_node_replicas = json.loads(result['replicas'])
         ## Check if leaving Node has delivered all of his replicas
         if not leaving_node_replicas:
             traversed = False
             return "Replicas exchange after depart successfully done"
-        
+
         tmp_node_replicas = n.get_replica_list()
         replicas_exchange = {}
         for key in leaving_node_replicas:
             val_arr = leaving_node_replicas[key]
-            ## Leaving node delivers his replica to tmp_node and tmp_node deletes his replica with the same hash(key) if it exists 
-            n.set_replica_to_replica_list(int(key),val_arr[1])
-            # If tmp_node replica list does't contain a replica with the same id, it means that replica chain stops on tmp_node 
+            #tmp_val_arr = n.get_replica_list()[int(key)]
+            ## Leaving node delivers his replica to tmp_node and tmp_node deletes his replica with the same hash(key) if it exists
+            if int(key) in n.get_song_list():
+                replicas_exchange[int(key)] = [val_arr[0], val_arr[1] +1]
+                continue
+            n.set_replica_to_replica_list(int(key),val_arr)
+            # If tmp_node replica list does't contain a replica with the same id, it means that replica chain stops on tmp_node
             if int(key) in tmp_node_replicas:
-                replicas_exchange[int(key)] = val_arr
+                replicas_exchange[int(key)] = [val_arr[0] , val_arr[1]+1]
         ## Tmp_node exchanges replicas with his successor
         successor_url = get_url(n.get_successor())
         traversed = True
         req = requests.post(successor_url+"/replicas_exchange_after_depart",data = {'replicas':json.dumps(replicas_exchange)})
     traversed = False
-    return "Replicas exchange after join successfully done" 
+    return "Replicas exchange after join successfully done"
 
 
 @app.route('/overlay',methods = ['GET'])
@@ -435,4 +499,4 @@ def main(host,port):
 if __name__ == '__main__':
   host = sys.argv[1]
   port = sys.argv[2]
-  main(host,port)                                    
+  main(host,port)
