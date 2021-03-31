@@ -187,11 +187,11 @@ def dht_add_node():
     req = requests.get(predecessor_url+"/get_identifier")
     pred_id = int(req.json()['id'])
     if pred_id > suc_id:
-      OFFS = (2^160)-pred_id
+      OFFS = (2**160)-pred_id
     else:
       OFFS = 0
     for key in successor_song_list:
-        if (int(key)+OFFS)%(2^160) <= (n.identifier+OFFS)%(2^160) :
+        if (int(key)+OFFS)%(2**160) <= (n.identifier+OFFS)%(2**160) :
             n.set_song_to_song_list(int(key),int(successor_song_list[key]))
             deleted_keys[int(key)] = "del"
     ## Successor deletes the songs that belong to me
